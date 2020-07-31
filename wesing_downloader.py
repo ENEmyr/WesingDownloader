@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from itertools import cycle
 from optparse import OptionParser
 from os.path import join, abspath, exists
+from urllib import parse
 
 def random_header():
     HEADERS_LIST = [
@@ -21,6 +22,16 @@ def get_proxies():
     list_proxies = res.text.split('\n')
     list_proxies = list(filter(lambda x: x != '', list_proxies))
     list_proxies = list(map(lambda x: x.replace('\t', ''), list_proxies))
+    # PROXY_URL = 'https://free-proxy-list.net/'
+    # response = requests.get(PROXY_URL)
+    # soup = BeautifulSoup(response.text, 'lxml')
+    # table = soup.find('table',id='proxylisttable')
+    # list_tr = table.find_all('tr')
+    # list_td = [elem.find_all('td') for elem in list_tr]
+    # list_td = list(filter(None, list_td))
+    # list_ip = [elem[0].text for elem in list_td]
+    # list_ports = [elem[1].text for elem in list_td]
+    # list_proxies = [':'.join(elem) for elem in list(zip(list_ip, list_ports))]
     return list_proxies    
 
 def download_albums(urls:list):
@@ -28,7 +39,10 @@ def download_albums(urls:list):
     if type(urls) != list:
         raise ValueError("urls muse be list")
     for url in urls:
-        res = requests.get(url, headers=random_header(), proxies={"http": next(proxy_pool)})
+        try:
+            res = requests.get(url, headers=random_header(), proxies={"http": next(proxy_pool)})
+        except Exception:
+            continue
         soup = BeautifulSoup(res.content, 'html.parser')
         elements = soup.findAll('a', {'class': 'mod_song_list__body'})
         alblum_name = soup.title.get_text()
@@ -37,7 +51,10 @@ def download_albums(urls:list):
         print('Album directory was created.')
         for e in elements:
             song_url = e['href']
-            page = requests.get(song_url, headers=random_header(), proxies={"http": next(proxy_pool)})
+            try:
+                page = requests.get(song_url, headers=random_header(), proxies={"http": next(proxy_pool)})
+            except Exception:
+                continue
             script_page = BeautifulSoup(page.content, 'html.parser')
             song_title = str(script_page.title.get_text())
             song_title = song_title[:song_title.rfind('-')]
@@ -47,10 +64,10 @@ def download_albums(urls:list):
             stop_index = script.find('"')
             script = script[:stop_index]
             song_data = requests.get(script, allow_redirects=True, headers=random_header())
-            save_path = join(abspath('.'), abspath(f'downloaded/{alblum_name}'), f'{song_title}.mp4')
+            save_path = join(abspath('.'), abspath(f'downloaded/{alblum_name}'), f'{song_title}.mp3')
             print(save_path)
             open(save_path, 'wb').write(song_data.content)
-            print(f'{song_title}.mp4 has been downloaded.')
+            print(f'{song_title}.mp3 has been downloaded.')
 
 def download_tracks(uid:str, n_download:int = 1):
     proxy_pool = cycle(get_proxies())
@@ -69,42 +86,46 @@ def download_tracks(uid:str, n_download:int = 1):
         loaded_json = json.loads(json_str)
         for track in loaded_json["tracks"]:
             track_url = f'https://wesingapp.com/play?s={track["shareid"]}'
-            track_title = f'{track["title"]}.mp4'
+            track_title = f'{track["title"]}.mp3'
             title_track_pairs.append((track_title, track_url))
     print('Track urls has been fetched')
     print('Starting download')
     for title, url in title_track_pairs:
-        page = requests.get(url, headers=random_header(), proxies={"http": next(proxy_pool)})
-        script_page = BeautifulSoup(page.content, 'html.parser')
-        if script_page.findAll('script') == []:
-            continue
-        script = str(script_page.findAll('script')[3])
-        start_index = script.find('playurl') + 10
-        script = script[start_index:]
-        stop_index = script.find('"')
-        script = script[:stop_index]
-        song_data = requests.get(script, allow_redirects=True, headers=random_header())
-        save_path = join(abspath('.'), abspath(f'downloaded/{title}'))
-        open(save_path, 'wb').write(song_data.content)
-        print(f'{title} has been downloaded.')
+        try:
+            page = requests.get(url, headers=random_header(), proxies={"http": next(proxy_pool)})
+            script_page = BeautifulSoup(page.content, 'html.parser')
+            if script_page.findAll('script') == []:
+                continue
+            script = str(script_page.findAll('script')[3])
+            start_index = script.find('playurl') + 10
+            script = script[start_index:]
+            stop_index = script.find('"')
+            script = script[:stop_index]
+            song_data = requests.get(script, allow_redirects=True, headers=random_header())
+            save_path = join(abspath('.'), abspath(f'downloaded/{title}'))
+            open(save_path, 'wb').write(song_data.content)
+            print(f'{title} has been downloaded.')
+        except Exception as e:
+            print(f'Error occur while download {title}, {e}')
 
-parser = OptionParser()
-parser.add_option('-a', '--album', dest='album', help="Relative path to album urls", default='')
-parser.add_option('-t', '--track', dest='track', help="Uid of owner of tracks", default='')
-parser.add_option('-n', '--n_tracks', dest='n_track', help="Number of tracks to download", default=1)
+if __name__ == "__main__":
+    parser = OptionParser()
+    parser.add_option('-a', '--album', dest='album', help="Relative path to album urls", default='')
+    parser.add_option('-t', '--track', dest='track', help="Uid of tracks owner", default='')
+    parser.add_option('-n', '--n_tracks', dest='n_track', help="Number of tracks to download", default=1)
 
-(options, args) = parser.parse_args()
+    (options, args) = parser.parse_args()
 
-if options.album == '' and options.track == '':
-    raise Exception("Please specify arguments")
+    if options.album == '' and options.track == '':
+        raise Exception("Please specify arguments")
 
-if not exists(join(abspath('.'), abspath('downloaded'))):
-    mkdir('downloaded')
-if options.album != '':
-    urls = open(join(abspath('.'), abspath(options.album)), 'r').readlines()
-    urls = list(map(lambda x: x.replace('\n', ''), urls))
-    download_albums(urls)
-if options.track != '':
-    download_tracks(options.track, int(options.n_track))
+    if not exists(join(abspath('.'), abspath('downloaded'))):
+        mkdir('downloaded')
+    if options.album != '':
+        urls = open(join(abspath('.'), abspath(options.album)), 'r').readlines()
+        urls = list(map(lambda x: x.replace('\n', ''), urls))
+        download_albums(urls)
+    if options.track != '':
+        download_tracks(options.track, int(options.n_track))
 
-print('Download completed.')
+    print('Download completed.')
